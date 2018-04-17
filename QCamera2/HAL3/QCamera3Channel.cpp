@@ -1715,13 +1715,14 @@ int32_t QCamera3ProcessingChannel::setReprocConfig(reprocess_config_t &reproc_cf
         reproc_cfg.stream_format = streamFormat;
     }
 
+    if (getStreamByIndex(0) == NULL) {
+        LOGE("Could not find stream");
+        rc = -1;
+        return rc;
+    }
+
     switch (reproc_cfg.stream_type) {
         case CAM_STREAM_TYPE_PREVIEW:
-            if (getStreamByIndex(0) == NULL) {
-                LOGE("Could not find stream");
-                rc = -1;
-                break;
-            }
             rc = mm_stream_calc_offset_preview(
                     getStreamByIndex(0)->getStreamInfo(),
                     &reproc_cfg.input_stream_dim,
@@ -5653,6 +5654,13 @@ int32_t QCamera3ReprocessChannel::overrideMetadata(qcamera_hal3_pp_buffer_t *pp_
                             crop_data->crop_info[crop_data->num_of_streams].stream_id =
                                     mStreams[0]->getMyServerID();
                             crop_data->num_of_streams++;
+
+                            if((!hal_obj->needHALPP()) &&
+                                   (hal_obj->getHalPPType() ==  CAM_HAL_PP_TYPE_BOKEH))
+                            {
+                                jpeg_settings->crop = crop_data->crop_info[j].crop;
+                                jpeg_settings->is_crop_valid = true;
+                            }
 
                             LOGD("Reprocess stream server id: %d",
                                      mStreams[0]->getMyServerID());
