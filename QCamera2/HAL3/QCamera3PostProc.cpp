@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -380,9 +380,7 @@ int32_t QCamera3PostProcessor::flush()
  *==========================================================================*/
 int32_t QCamera3PostProcessor::stop(bool isHDR)
 {
-    QCamera3HardwareInterface* hal_obj = (QCamera3HardwareInterface*)m_parent->mUserData;
-    if ((m_pHalPPManager != NULL) && hal_obj->needHALPP() &&
-            (hal_obj->getHalPPType() != CAM_HAL_PP_TYPE_NONE)) {
+    if ((m_pHalPPManager != NULL)) {
         m_pHalPPManager->stop();
     }
 
@@ -3245,7 +3243,7 @@ int32_t QCamera3PostProcessor::processHalPPData(qcamera_hal_pp_data_t *pData)
         // check if to encode hal pp input buffer
         char prop[PROPERTY_VALUE_MAX];
         memset(prop, 0, sizeof(prop));
-        property_get("persist.camera.dualfov.jpegnum", prop, "1");
+        property_get("persist.vendor.camera.dualfov.jpegnum", prop, "1");
         int dualfov_snap_num = atoi(prop);
         if (dualfov_snap_num == 1) {
             LOGH("No need to encode input buffer, just release it.");
