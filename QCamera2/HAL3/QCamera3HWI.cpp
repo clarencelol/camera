@@ -1068,7 +1068,7 @@ int QCamera3HardwareInterface::openCamera()
         // Create and initialize FOV-control object
         m_pFovControl = QCameraFOVControl::create(
                 gCamCapability[mCameraId]->main_cam_cap,
-                gCamCapability[mCameraId]->aux_cam_cap);
+                gCamCapability[mCameraId]->aux_cam_cap, true);
         if (m_pFovControl) {
             mDualCamType = (uint8_t)QCameraCommon::getDualCameraConfig(
                     gCamCapability[mCameraId]->main_cam_cap,
@@ -3141,6 +3141,7 @@ int64_t QCamera3HardwareInterface::getMinFrameDuration(const camera3_capture_req
 {
     bool hasJpegStream = false;
     bool hasRawStream = false;
+    int64_t mMinFrameDuration = mMinProcessedFrameDuration;
     for (uint32_t i = 0; i < request->num_output_buffers; i ++) {
         const camera3_stream_t *stream = request->output_buffers[i].stream;
         if (stream->format == HAL_PIXEL_FORMAT_BLOB && stream->data_space != HAL_DATASPACE_DEPTH)
@@ -3153,10 +3154,11 @@ int64_t QCamera3HardwareInterface::getMinFrameDuration(const camera3_capture_req
             hasRawStream = true;
     }
 
-    if (!hasJpegStream)
-        return MAX(mMinRawFrameDuration, mMinProcessedFrameDuration);
-    else
-        return MAX(MAX(mMinRawFrameDuration, mMinProcessedFrameDuration), mMinJpegFrameDuration);
+    if (hasRawStream)
+        mMinFrameDuration = MAX(mMinRawFrameDuration, mMinFrameDuration);
+    if (hasJpegStream)
+        mMinFrameDuration = MAX(mMinJpegFrameDuration, mMinFrameDuration);
+    return mMinFrameDuration;
 }
 
 /*===========================================================================
@@ -3871,6 +3873,12 @@ void QCamera3HardwareInterface::handleMetadataWithLock(
                     }
                 }
 
+                if(i->bUrgentReceived == 0)
+                {
+                    LOGD("urgent metadata is dropped for frame number %d", frame_number);
+                    i->partial_result_cnt++;
+                    result.partial_result = i->partial_result_cnt;
+                }
                 result.output_buffers = result_buffers;
                 orchestrateResult(&result);
                 LOGD("Sending buffers with meta frame_number = %u, capture_time = %lld",
@@ -3881,6 +3889,12 @@ void QCamera3HardwareInterface::handleMetadataWithLock(
                 LOGE("Fatal error: out of memory");
             }
         } else {
+            if(i->bUrgentReceived == 0)
+            {
+                LOGD("urgent metadata is dropped for frame number %d", frame_number);
+                i->partial_result_cnt++;
+                result.partial_result = i->partial_result_cnt;
+            }
             orchestrateResult(&result);
             LOGD("meta frame_number = %u, capture_time = %lld",
                     result.frame_number, i->timestamp);
@@ -10506,11 +10520,16 @@ int QCamera3HardwareInterface::initStaticMetadata(uint32_t cameraId)
         }
     }
 
+    /*HFR configs of 60 and 90fps are not supported as changes are not completely implemented
+    end to end. Once changes are implemented, changes can be uncommented to support it. Define
+    macro "SUPPORT_HFR_CONFIG_60_90_FPS" to enable HFR 60 and 90 fps in the app setting*/
+#ifdef SUPPORT_HFR_CONFIGS_60_90_FPS
     if (custom_hfr_configs.size() > 0) {
         staticInfo.update(
             QCAMERA3_HFR_SIZES,
             custom_hfr_configs.array(), custom_hfr_configs.size());
     }
+#endif
 
     uint8_t cam_mode = is_dual_camera_by_idx(cameraId);
     staticInfo.update(QCAMERA3_LOGICAL_CAM_MODE, &cam_mode, 1);
@@ -10794,7 +10813,7 @@ int QCamera3HardwareInterface::getCamInfo(uint32_t cameraId,
             // Create and initialize FOV-control object
             QCameraFOVControl *pFovControl = QCameraFOVControl::create(
                     gCamCapability[cameraId]->main_cam_cap,
-                    gCamCapability[cameraId]->aux_cam_cap);
+                    gCamCapability[cameraId]->aux_cam_cap, true);
 
             if (pFovControl) {
                 *gCamCapability[cameraId] = pFovControl->consolidateCapabilities(
@@ -14574,6 +14593,7 @@ int32_t QCamera3HardwareInterface::bundleRelatedCameras(bool enable_sync)
     bundle_info[num_cam].related_sensor_session_id = sessionID;
     bundle_info[num_cam].perf_mode = getLowPowerMode(CAM_TYPE_MAIN);
     bundle_info[num_cam].sync_mechanism = DUALCAM_SYNC_MECHANISM;
+    bundle_info[num_cam].hal_lpm_control = true;
     num_cam++;
 
     bundle_info[num_cam].sync_control = syncControl;
