@@ -115,6 +115,8 @@ namespace qcamera {
 
 #define TIMEOUT_NEVER -1
 
+#define MIN_DIM(dim1,dim2) ((dim1.width*dim1.height)>(dim2.width*dim2.height)?dim2:dim1)
+
 /* Face rect indices */
 #define FACE_LEFT              0
 #define FACE_TOP               1
@@ -1652,6 +1654,197 @@ void QCamera3HardwareInterface::updateTimeStampInPendingBuffers(
     }
     return;
 }
+bool QCamera3HardwareInterface::isPPUpscaleNeededForDim(const cam_dimension_t &dim)
+{
+    bool ret = false;
+    cam_dimension_t isp_max = gCamCapability[mCameraId]->single_isp_max_size;
+     if((dim.width > isp_max.width) || (dim.height > isp_max.height))
+     {
+        ret = true;
+     }
+     return ret;
+}
+
+bool QCamera3HardwareInterface::isAsymetricDim(const cam_dimension_t &dim)
+{
+    bool ret = false;
+    if(isDualCamera())
+    {
+        if(!isDimSupportedbyCamType(dim,CAM_TYPE_MAIN)
+                || !isDimSupportedbyCamType(dim,CAM_TYPE_AUX))
+        {
+            ret = true;
+        }
+    }
+    return ret;
+}
+
+void QCamera3HardwareInterface::rectifyStreamDimIfNeeded(
+        cam_dimension_t &dim, const cam_sync_type_t &type, bool &needUpScale)
+{
+    if(isDualCamera())
+    {
+        if(isPPUpscaleNeededForDim(dim) || isAsymetricDim(dim))
+        {
+            cam_dimension_t updatedDim = getOptimalSupportedDim(dim,type);
+            if((updatedDim.width * updatedDim.height) < (dim.width * dim.height))
+            {
+                dim = updatedDim;
+                needUpScale = true;
+            }
+        }
+    }
+}
+
+void QCamera3HardwareInterface::rectifyStreamSizesByCamType(
+        cam_stream_size_info_t* streamsInfo, const cam_sync_type_t &type)
+{
+    if(isDualCamera())
+    {
+        cam_stream_size_info_t *info = streamsInfo;
+
+        for (uint32_t i = 0; i < info->num_streams; i++) {
+            cam_dimension_t dim;
+            dim.width = info->stream_sizes[i].width;
+            dim.height = info->stream_sizes[i].height;
+            if(isPPUpscaleNeededForDim(dim) || isAsymetricDim(dim))
+            {
+                //setting stream size less then equal to requested dimension of same
+                // aspectratio.
+                cam_dimension_t optimal_dim = getOptimalSupportedDim(dim, type);
+                info->stream_sizes[i].width = optimal_dim.width;
+                info->stream_sizes[i].height = optimal_dim.height;
+            }
+        }
+    }
+}
+
+/*===========================================================================
+ * FUNCTION   : isDimSupportedbyCamType.
+ *
+ * DESCRIPTION: In DualCamera mode, compare the "dim" with the main or aux cam
+ *              based on cam_sync_type passed in "type", if found returns true else false.
+ *              In Single camera mode return true.
+ * PARAMETERS : cam_dimension_t to compare with "type" cam dimensions.
+ *
+ * RETURN     : bool.
+ *
+ *==========================================================================*/
+bool QCamera3HardwareInterface::isDimSupportedbyCamType(const cam_dimension_t &dim,
+                                                                 const cam_sync_type_t &type)
+{
+    bool ret = false;
+    if(isDualCamera())
+    {
+        uint32_t tableSize;
+        cam_dimension_t *picture_dim = NULL;
+        if(type == CAM_TYPE_MAIN)
+        {
+            tableSize = gCamCapability[mCameraId]->main_cam_cap->picture_sizes_tbl_cnt;
+            picture_dim = gCamCapability[mCameraId]->main_cam_cap->picture_sizes_tbl;
+        }else {
+            tableSize = gCamCapability[mCameraId]->aux_cam_cap->picture_sizes_tbl_cnt;
+            picture_dim = gCamCapability[mCameraId]->aux_cam_cap->picture_sizes_tbl;
+        }
+
+        for(uint32_t i = 0; i < tableSize; i++)
+        {
+            if(((uint32_t)dim.width == (uint32_t)picture_dim[i].width) &&
+                ((uint32_t)dim.height == (uint32_t)picture_dim[i].height))
+            {
+                ret = true;
+                break;
+            }
+        }
+        ret = false;
+    }
+    return ret;
+}
+
+/*===========================================================================
+ * FUNCTION   : getOptimalSupportedDim
+ *
+ * DESCRIPTION: For dualcamera: extract the nearest to supported dimension request
+ *              of aspectRatio tolerence less than 0.4.
+ *              For Bokeh: return the res supported by both cameras.
+ * PARAMETERS :
+ *   @cam_dimension_t : neareast dimension to be searched for.
+ *   @cam_sync_type_t : if DualCamera, based on sync type search for optimal dim.
+ *                      if Single Camera, ignore this param.
+ * RETURN     :
+ *   @cam_dimension_t : optimal dim to be supported.
+ *
+ *==========================================================================*/
+cam_dimension_t QCamera3HardwareInterface::getOptimalSupportedDim(const cam_dimension_t &dim,
+                                                                  const cam_sync_type_t &type)
+{
+    if(isDualCamera())
+    {
+        float aspectRatio = (float)dim.width/(float)dim.height;
+        float aspectRatioTolerence = 0.04;
+        cam_dimension_t *picture_dim = NULL;
+        cam_dimension_t optimal_dim = {0,0};
+        cam_dimension_t max_isp_res = getMaxSingleIspRes();
+        cam_dimension_t max_sensor_dim = {0,0};
+        cam_dimension_t max_supported_dim ={0,0};
+        uint32_t tableSize;
+        if(type == CAM_TYPE_MAIN)
+        {
+            tableSize = gCamCapability[mCameraId]->main_cam_cap->picture_sizes_tbl_cnt;
+            picture_dim = gCamCapability[mCameraId]->main_cam_cap->picture_sizes_tbl;
+        }else {
+            tableSize = gCamCapability[mCameraId]->aux_cam_cap->picture_sizes_tbl_cnt;
+            picture_dim = gCamCapability[mCameraId]->aux_cam_cap->picture_sizes_tbl;
+        }
+
+        max_sensor_dim = picture_dim[0];
+        max_supported_dim = MIN_DIM(max_isp_res, max_sensor_dim);
+
+        if((max_supported_dim.width >= dim.width)
+                    && (max_supported_dim.height >= dim.height))
+        {
+            goto END;
+        }
+        //First match the aspect ratio then compare with dim.
+        for(uint32_t i = 0; i < tableSize; i++)
+        {
+            //ignore the dimension above sensor max size.
+            if((max_supported_dim.width < picture_dim[i].width)
+                    ||  (max_supported_dim.height < picture_dim[i].height))
+            {
+                continue;
+            }
+            if((((float)picture_dim[i].width/(float)picture_dim[i].height) - aspectRatio)
+                                                                       < aspectRatioTolerence)
+            {
+                optimal_dim = picture_dim[i];
+                break;
+            }
+        }
+
+        if((optimal_dim.width*optimal_dim.height) > 0)
+        {
+            return optimal_dim;
+        }
+    }
+END:
+    return dim;
+}
+
+/*===========================================================================
+ * FUNCTION   : getMaxSingleIspRes
+ *
+ * DESCRIPTION: return's max resolution supported by single isp.
+ *
+ * PARAMETERS : none
+ *
+ * RETURN     : max supported dimension of single isp.
+ *
+ *==========================================================================*/
+cam_dimension_t QCamera3HardwareInterface::getMaxSingleIspRes()
+{
+    return gCamCapability[mCameraId]->single_isp_max_size;
+}
 
 /*===========================================================================
  * FUNCTION   : configureStreams
@@ -1985,10 +2178,7 @@ int QCamera3HardwareInterface::configureStreamsPerfLocked(
 
         }
     }
-
-    if (gCamCapability[mCameraId]->position == CAM_POSITION_FRONT ||
-            gCamCapability[mCameraId]->position == CAM_POSITION_FRONT_AUX ||
-            !m_bIsVideo) {
+    if (!m_bIsVideo) {
         m_bEisEnable = false;
     }
 
@@ -3254,6 +3444,31 @@ int32_t QCamera3HardwareInterface::handlePendingReprocResults(uint32_t frame_num
 }
 
 /*===========================================================================
+ * FUNCTION   : checkFrameInPendingList
+ *
+ * DESCRIPTION: Check for the frame_number present in pending request list or not.
+ *
+ * PARAMETERS : @frame_number: frame_number
+ *
+ * RETURN     :@bool: true if frame present in list else false.
+ *
+ *==========================================================================*/
+bool QCamera3HardwareInterface::checkFrameInPendingList(
+        const uint32_t frame_number)
+{
+    bool ret = false;
+    for(auto itr = mPendingRequestsList.begin(); itr != mPendingRequestsList.end(); itr++)
+    {
+        if(frame_number == itr->frame_number)
+        {
+            ret = true;
+            break;
+        }
+    }
+    return ret;
+}
+
+/*===========================================================================
  * FUNCTION   : handleBatchMetadata
  *
  * DESCRIPTION: Handles metadata buffer callback in batch mode
@@ -3323,11 +3538,15 @@ void QCamera3HardwareInterface::handleBatchMetadata(
     if (urgent_frame_number_valid) {
         ssize_t idx = mPendingBatchMap.indexOfKey(last_urgent_frame_number);
         if(idx < 0) {
-            LOGE("Invalid urgent frame number received: %d. Irrecoverable error",
+            LOGE("Invalid urgent frame number received: %d.",
                 last_urgent_frame_number);
-            mState = ERROR;
+            if(checkFrameInPendingList(last_urgent_frame_number))
+            {
+                LOGE("Irrecoverable Error: frame not batched");
+                mState = ERROR;
+            }
             pthread_mutex_unlock(&mMutex);
-            return;
+            goto BUFFER_NOT_BATCHED;
         }
         first_urgent_frame_number = mPendingBatchMap.valueAt(idx);
         urgentFrameNumDiff = last_urgent_frame_number + 1 -
@@ -3341,11 +3560,15 @@ void QCamera3HardwareInterface::handleBatchMetadata(
     if (frame_number_valid) {
         ssize_t idx = mPendingBatchMap.indexOfKey(last_frame_number);
         if(idx < 0) {
-            LOGE("Invalid frame number received: %d. Irrecoverable error",
+            LOGE("Invalid frame number received: %d.",
                 last_frame_number);
-            mState = ERROR;
+            if(checkFrameInPendingList(last_frame_number))
+            {
+                LOGE("Irrecoverable Error: frame not batched");
+                mState = ERROR;
+            }
             pthread_mutex_unlock(&mMutex);
-            return;
+            goto BUFFER_NOT_BATCHED;
         }
         first_frame_number = mPendingBatchMap.valueAt(idx);
         frameNumDiff = last_frame_number + 1 -
@@ -3425,6 +3648,7 @@ void QCamera3HardwareInterface::handleBatchMetadata(
         pthread_mutex_unlock(&mMutex);
     }
 
+BUFFER_NOT_BATCHED:
     /* BufDone metadata buffer */
     if (free_and_bufdone_meta_buf && !is_metabuf_queued) {
         mMetadataChannel->bufDone(metadata_buf);
@@ -3533,7 +3757,7 @@ void QCamera3HardwareInterface::handleMetadataWithLock(
             free(metadata_buf);
             return;
         } else {
-            if (pMetaDataAux && frame_number_valid && frame_number) {
+            if (pMetaDataAux && frame_number_valid && frame_number && this->needHALPP()) {
                 LOGD("found valid metadata for aux %d", frame_number);
                 for (auto req = mPendingBuffersMap.mPendingBuffersInRequest.begin();
                           req != mPendingBuffersMap.mPendingBuffersInRequest.end();
@@ -3544,7 +3768,7 @@ void QCamera3HardwareInterface::handleMetadataWithLock(
                             QCamera3PicChannel *channel = (QCamera3PicChannel *) (k->stream->priv);
                             if (k->stream->format == HAL_PIXEL_FORMAT_BLOB) {
                                 LOGD("found snapshot stream in channel ");
-                                channel->queueAuxMetadata(metadata_buf, frame_number);
+                                channel->queueReprocMetadata(metadata_buf, frame_number, false);
                                 return;
                             }
                         }
@@ -5176,6 +5400,24 @@ int QCamera3HardwareInterface::processCaptureRequest(
             }
         }
 
+        if(isDualCamera())
+        {
+            if (m_pFovControl != NULL) {
+                m_pFovControl->setHalPPType(m_halPPType);
+                m_pFovControl->translateInputParams(mParameters, mAuxParameters);
+            }
+            if(mParameters->is_valid[CAM_INTF_META_STREAM_INFO])
+            {
+                void *main_param = POINTER_OF_META(CAM_INTF_META_STREAM_INFO, mParameters);
+                if(main_param)
+                {
+                    cam_stream_size_info_t *info = (cam_stream_size_info_t *)main_param;
+                    rectifyStreamSizesByCamType(info, CAM_TYPE_MAIN);
+                    mStreamConfigInfo = *info;
+                }
+            }
+        }
+
         // e.g. If we used video HDR in camcorder mode but are not using HDR in picture
         // mode, sensor HDR should be disabled here
         if (!didSetSensorHdr)
@@ -5207,23 +5449,17 @@ int QCamera3HardwareInterface::processCaptureRequest(
             LOGE("set_parms failed for hal version, stream info");
         }
 
-        if (isDualCamera()){
-            if (m_pFovControl != NULL) {
-                m_pFovControl->setHalPPType(m_halPPType);
-                m_pFovControl->translateInputParams(mParameters, mAuxParameters);
-            }
-
+        if (isDualCamera())
+        {
             //Set sync type for AUX camera.
             if (mAuxParameters->is_valid[CAM_INTF_META_STREAM_INFO]) {
                 void *aux_param = POINTER_OF_META(CAM_INTF_META_STREAM_INFO, mAuxParameters);
                 if (aux_param) {
                     cam_stream_size_info_t *info = (cam_stream_size_info_t *)aux_param;
                     info->sync_type = CAM_TYPE_AUX;
+                    rectifyStreamSizesByCamType(info, CAM_TYPE_AUX);
                 }
             }
-
-            rc = mCameraHandle->ops->set_parms(get_aux_camera_handle(mCameraHandle->camera_handle),
-                    mAuxParameters);
 
             cam_stream_size_info_t auxStreamInfo;
             READ_PARAM_ENTRY(mAuxParameters, CAM_INTF_META_STREAM_INFO, auxStreamInfo);
@@ -5240,6 +5476,9 @@ int QCamera3HardwareInterface::processCaptureRequest(
                         auxStreamInfo.sync_type,
                         auxStreamInfo.num_streams);
             }
+
+            rc = mCameraHandle->ops->set_parms(get_aux_camera_handle(mCameraHandle->camera_handle),
+                    mAuxParameters);
         }
 
         cam_dimension_t sensor_dim;
@@ -5309,10 +5548,10 @@ int QCamera3HardwareInterface::processCaptureRequest(
                 for (size_t i = 0; i < mStreamConfigInfo.num_streams; i++) {
                     if ( (1U << mStreamConfigInfo.type[i]) == channel->getStreamTypeMask() ) {
                         pp_mask = mStreamConfigInfo.postprocess_mask[i];
+                        channel->overridePPConfig(pp_mask);
                         break;
                     }
                 }
-                channel->overridePPConfig(pp_mask);
             }
             initDCSettings();
             //Trigger deferred job slave session
@@ -9389,7 +9628,7 @@ int QCamera3HardwareInterface::initStaticMetadata(uint32_t cameraId)
             break;
         }
     }
-    if (facingBack && eis_prop_set && eisSupported) {
+    if (eis_prop_set && eisSupported) {
         availableVstabModes.add(ANDROID_CONTROL_VIDEO_STABILIZATION_MODE_ON);
     }
     staticInfo.update(ANDROID_CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES,
