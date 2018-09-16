@@ -44,6 +44,7 @@
 
 extern "C" {
 #include "mm_camera_dbg.h"
+#include "mm_camera_interface.h"
 }
 
 using namespace android;
@@ -306,6 +307,21 @@ bool QCameraCommon::isVideoUBWCEnabled()
 #endif
 }
 
+/*===========================================================================
+ * FUNCTION   : is_target_SDM450
+ *
+ * DESCRIPTION: Function to check whether target is sdm630 or not.
+ *
+ * PARAMETERS : None
+ *
+ * RETURN     : TRUE -- SDM450 target.
+ *              FALSE -- Some other target.
+ *==========================================================================*/
+
+bool QCameraCommon::is_target_SDM450()
+{
+    return (parseHWID() == 338 || parseHWID() == 351);
+}
 
 
 /*===========================================================================
@@ -321,23 +337,7 @@ bool QCameraCommon::isVideoUBWCEnabled()
 
 bool QCameraCommon::is_target_SDM630()
 {
-    int fd;
-    bool is_target_SDM630=false;
-    char buf[10] = {0};
-    fd = open("/sys/devices/soc0/soc_id", O_RDONLY);
-    if (fd >= 0) {
-        if (read(fd, buf, sizeof(buf) - 1) == -1) {
-            ALOGW("Unable to read soc_id");
-            is_target_SDM630 = false;
-        } else {
-            int soc_id = atoi(buf);
-            if (soc_id == 318 || soc_id== 327) {
-            is_target_SDM630 = true; /* Above SOCID for SDM630 */
-            }
-        }
-    }
-    close(fd);
-    return is_target_SDM630;
+    return  (parseHWID() == 318 || parseHWID() == 327);
 }
 
 
@@ -426,6 +426,66 @@ dual_cam_type QCameraCommon::getDualCameraConfig(cam_capability_t *capsMainCam,
         type = DUAL_CAM_BAYER_MONO;
     }
     return type;
+}
+
+/*===========================================================================
+* FUNCTION   : parseHWID
+*
+* DESCRIPTION: get SOC id of current platform
+*
+* PARAMETERS : None
+*
+* RETURN     : Return Soc Id if successfull else -1
+*==========================================================================*/
+int QCameraCommon::parseHWID()
+{
+    static int nHW_ID = -1;
+    if (nHW_ID == -1)
+    {
+#ifdef ANDROID
+        int result = -1;
+        char buffer[PATH_MAX];
+        FILE *device = NULL;
+        device = fopen("/sys/devices/soc0/soc_id", "r");
+        if(device)
+        {
+          /* 4 = 3 (MAX_SOC_ID_LENGTH) + 1 */
+          result = fread(buffer, 1, 4, device);
+          fclose(device);
+        }
+        else
+        {
+          device = fopen("/sys/devices/system/soc/soc0/id", "r");
+          if(device)
+          {
+             result = fread(buffer, 1, 4, device);
+             fclose(device);
+          }
+        }
+        if(result > 0)
+        {
+           nHW_ID = atoi(buffer);
+        }
+        ALOGE("%s: Got HW_ID = %d",__func__, nHW_ID);
+#endif
+    }
+    return nHW_ID;
+}
+
+bool QCameraCommon::isAutoFocusSupported(uint32_t cam_type)
+{
+    bool bAFSupported = false;
+    bool bMainCamAFSupported = (m_pCapability->main_cam_cap->supported_focus_modes_cnt > 1);
+    bool bAuxCamAFSupported = (m_pCapability->aux_cam_cap->supported_focus_modes_cnt > 1);
+    if (cam_type == MM_CAMERA_DUAL_CAM) {
+        bAFSupported =  (bMainCamAFSupported || bAuxCamAFSupported) ;
+    } else if (cam_type == CAM_TYPE_AUX) {
+        bAFSupported =  bAuxCamAFSupported;
+    } else {
+        bAFSupported =  bMainCamAFSupported;
+    }
+    LOGH("bAFSupported: %d cam_type: %d", bAFSupported, cam_type);
+    return bAFSupported;
 }
 
 }; // namespace qcamera

@@ -7884,12 +7884,6 @@ QCamera3HardwareInterface::translateFromHalMetadata(
                 hAeRegions->rect.height);
     }
 
-    IF_META_AVAILABLE(uint32_t, afState, CAM_INTF_META_AF_STATE, metadata) {
-        uint8_t fwk_afState = (uint8_t) *afState;
-        camMetadata.update(ANDROID_CONTROL_AF_STATE, &fwk_afState, 1);
-        LOGD("urgent Metadata : ANDROID_CONTROL_AF_STATE %u", *afState);
-    }
-
     IF_META_AVAILABLE(float, focusDistance, CAM_INTF_META_LENS_FOCUS_DISTANCE, metadata) {
         camMetadata.update(ANDROID_LENS_FOCUS_DISTANCE , focusDistance, 1);
     }
@@ -8387,6 +8381,12 @@ QCamera3HardwareInterface::translateCbUrgentMetadataToResultMetadata
         uint8_t fwk_ae_state = (uint8_t) *ae_state;
         camMetadata.update(ANDROID_CONTROL_AE_STATE, &fwk_ae_state, 1);
         LOGD("urgent Metadata : ANDROID_CONTROL_AE_STATE %u", *ae_state);
+    }
+
+    IF_META_AVAILABLE(uint32_t, afState, CAM_INTF_META_AF_STATE, metadata) {
+        uint8_t fwk_afState = (uint8_t) *afState;
+        camMetadata.update(ANDROID_CONTROL_AF_STATE, &fwk_afState, 1);
+        LOGD("urgent Metadata : ANDROID_CONTROL_AF_STATE %u", *afState);
     }
 
     IF_META_AVAILABLE(uint32_t, focusMode, CAM_INTF_PARM_FOCUS_MODE, metadata) {
@@ -14808,7 +14808,14 @@ int32_t QCamera3HardwareInterface::bundleRelatedCameras(bool enable_sync)
     cam_sync_related_sensors_control_t syncControl = CAM_SYNC_RELATED_SENSORS_OFF;
     property_get("persist.vendor.camera.stats.test.2outs", prop, "0");
     sync_3a_mode = (atoi(prop) > 0) ? CAM_3A_SYNC_ALGO_CTRL : sync_3a_mode;
-    cam_3a_sync_config_t sync_config_3a = {sync_3a_mode, sync_3a_mode};
+    cam_3a_sync_mode_t sync_stats_common, af_sync;
+    sync_stats_common = af_sync = sync_3a_mode;
+
+    //Set AF sync mode to none, if either of the sensors doesn't support auto focus.
+    if (!mCommon.isAutoFocusSupported(CAM_TYPE_MAIN) || !mCommon.isAutoFocusSupported(CAM_TYPE_AUX))
+        af_sync = CAM_3A_SYNC_NONE;
+
+    cam_3a_sync_config_t sync_config_3a = {sync_stats_common, af_sync};
 
     //Trigger dual camera Link command before Meta info
     cam_dual_camera_bundle_info_t bundle_info[MM_CAMERA_MAX_CAM_CNT];

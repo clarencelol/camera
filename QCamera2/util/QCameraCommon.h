@@ -55,6 +55,7 @@ public:
             cam_dimension_t exp_dim,
             cam_dimension_t cur_dim);
     bool isVideoUBWCEnabled();
+    static bool is_target_SDM450();
     static bool is_target_SDM630();
     static bool skipAnalysisBundling();
     bool needAnalysisStream();
@@ -62,10 +63,11 @@ public:
             cam_capability_t *capsAuxCam);
     static bool isBayer(cam_capability_t *caps);
     static bool isMono(cam_capability_t *caps);
+    bool isAutoFocusSupported(uint32_t cam_type);
 
 private:
     cam_capability_t *m_pCapability;
-
+    static int parseHWID();
 };
 
 }; // namespace qcamera
