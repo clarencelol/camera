@@ -321,8 +321,8 @@ bool QCameraCommon::isVideoUBWCEnabled()
 bool QCameraCommon::needHAL1Support()
 {
 #ifndef HAS_LOW_RAM
-    // QM215 non-GO supports only HAL3
-    if (is_target_QM215()) {
+    // QM215, QM2150 non-GO supports only HAL3
+    if ((is_target_QM215() || is_target_QM2150())) {
         LOGI("ONLY HAL3 SUPPORTED");
         return FALSE;
     }
@@ -378,6 +378,22 @@ bool QCameraCommon::is_target_SDM429()
 bool QCameraCommon::is_target_QM215()
 {
     return (parseHWID() == 386);
+}
+
+/*===========================================================================
+ * FUNCTION   : is_target_QM2150
+ *
+ * DESCRIPTION: Function to check whether target is QM2150  or not.
+ *
+ * PARAMETERS : None
+ *
+ * RETURN     : TRUE -- QM2150 target.
+ *              FALSE -- Some other target.
+ *==========================================================================*/
+
+bool QCameraCommon::is_target_QM2150()
+{
+    return (parseHWID() == 436);
 }
 
 /*===========================================================================
